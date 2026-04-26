@@ -75,17 +75,17 @@ Any game **not** in the list is still handled by the auto sig-finder — it will
 ## Source Code
 
 ### 1. Build
-Open `UnrealDumper.sln` in Visual Studio 2022, select **Release | x64**, and build.  
-The exe lands at `bin/Release/UnrealDumper.exe`.
+Open `UE Dumper.sln` in Visual Studio 2022, select **Release | x64**, and build.  
+The exe lands at `bin/Release/Dumper.exe`.
 
 ### 2. Launch your game
 Start the game and wait until you are in the main menu or in-game (the UE object pool must be fully populated).
 
 ### 3. Run UE Dumper
 ```
-UnrealDumper.exe           # full dump — Names, Objects, and SDK
-UnrealDumper.exe -p        # partial dump — Names and Objects only (fast)
-UnrealDumper.exe -w        # wait for a keypress before starting (gives time to inject mods)
+Dumper.exe           # full dump — Names, Objects, and SDK
+Dumper.exe -p        # partial dump — Names and Objects only (fast)
+Dumper.exe -w        # wait for a keypress before starting (gives time to inject mods)
 ```
 
 ---
