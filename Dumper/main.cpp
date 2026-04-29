@@ -7,8 +7,12 @@
 #include "progress.h"
 #include "autofind.h"
 #include "PatternScan.h"
+#include "vtable_resolver.h"
+#include "autooffsets.h"
+#include "log.h"
 #include <iostream>
 #include <iomanip>
+#include <unordered_set>
 namespace fs = std::filesystem;
 
 enum {
@@ -35,6 +39,9 @@ protected:
     bool Wait = false;
     fs::path Directory;
     fs::path ExeRoot;
+    std::vector<byte>       Image;
+    std::vector<FuncResult> FoundFuncs;
+    ResolvedOffsets         OffsetInfo;
 
 private:
     Dumper() {};
@@ -59,7 +66,7 @@ private:
         if (!ObjObjects.NumElements) return false;
 
         matchInfo = { start, (size_t)(sigMatch - start) };
-        fmt::print("  GObjects  found  @ section+0x{:08X}  ({} objects)\n",
+        LOG("  GObjects  found  @ section+0x{:08X}  ({} objects)\n",
             (uintptr_t)(address - start), ObjObjects.NumElements);
         return true;
     }
@@ -83,7 +90,7 @@ private:
         Read(*reinterpret_cast<decltype(GlobalNames)**>(address), &GlobalNames, sizeof(GlobalNames));
 
         matchInfo = { start, (size_t)(sigMatch - start) };
-        fmt::print("  GNames    found  @ section+0x{:08X}\n",
+        LOG("  GNames    found  @ section+0x{:08X}\n",
             (uintptr_t)(address - start));
         return true;
     }
@@ -121,7 +128,89 @@ private:
         WriteEntry("GObjects", gobjMatch, ActiveGObjectsSig);
         WriteEntry("GNames",   gnamesMatch, ActiveGNamesSig);
 
-        fmt::print("  Signatures saved to signatures.txt\n");
+        LOG("  Signatures saved to signatures.txt\n");
+    }
+
+    void SaveFuncAddresses() const
+    {
+        File f(Directory / "funcs.txt", "w");
+        if (!f) return;
+
+        fmt::print(f,
+            "; ============================================================\n"
+            "; UE Function addresses — {}\n"
+            "; Base: 0x{:X}\n"
+            ";\n"
+            "; RVA = offset from module base (stable across game restarts)\n"
+            "; VA  = Base + RVA              (actual runtime address)\n"
+            "; ============================================================\n\n",
+            UEVersion, Base);
+
+        size_t found = 0;
+        for (auto& r : FoundFuncs) {
+            if (r.found) {
+                fmt::print(f, "{:<35}  RVA=0x{:08X}   VA=0x{:X}\n",
+                    r.name, r.rva, Base + r.rva);
+                fmt::print(f, "  ; source: [{}] {}\n\n", r.source, r.label);
+                found++;
+            } else {
+                fmt::print(f, "{:<35}  NOT FOUND — sig needs update for this game/version\n\n",
+                    r.name);
+            }
+        }
+
+        LOG("  Function addresses saved ({}/{}) -> funcs.txt\n", found, FoundFuncs.size());
+    }
+
+    void DumpVTables() const
+    {
+        File f(Directory / "vtables.txt", "w");
+        if (!f) return;
+
+        const uint64_t imageEnd = Base + Image.size();
+
+        fmt::print(f,
+            "; ============================================================\n"
+            "; VTable dump — {}\n"
+            "; Base: 0x{:X}\n"
+            ";\n"
+            "; All addresses are RVAs (offset from module base).\n"
+            "; Reconstruct VA at runtime: Base + RVA\n"
+            "; ============================================================\n\n",
+            UEVersion, Base);
+
+        std::unordered_set<uintptr_t> seen;
+        size_t count = 0;
+
+        ObjObjects.Dump([&](byte* object) {
+            uintptr_t vtbl = Read<uintptr_t>((void*)object);
+            if (!vtbl || vtbl < Base || vtbl >= imageEnd) return;
+
+            uintptr_t vtbl_rva = vtbl - Base;
+            if (!seen.insert(vtbl_rva).second) return;
+
+            UE_UObject obj(object);
+            UE_UClass  cls = obj.GetClass();
+            std::string className = cls ? cls.GetFullName() : "Unknown";
+            uint32_t    objIndex  = obj.GetIndex();
+
+            std::vector<uintptr_t> slots;
+            slots.reserve(64);
+            for (int i = 0; i < 2048; i++) {
+                uintptr_t slot = Read<uintptr_t>((void*)(vtbl + (uintptr_t)i * 8));
+                if (slot < Base || slot >= imageEnd) break;
+                slots.push_back(slot - Base);
+            }
+
+            fmt::print(f, "[{:0>6}] {}\n  vtable=0x{:X}  slots={}\n",
+                objIndex, className, vtbl_rva, slots.size());
+            for (size_t i = 0; i < slots.size(); i++)
+                fmt::print(f, "  [{:3}] 0x{:X}\n", i, slots[i]);
+            fmt::print(f, "\n");
+            count++;
+        });
+
+        LOG("  VTables dumped: {} unique vtables -> vtables.txt\n", count);
     }
 
 public:
@@ -172,29 +261,28 @@ public:
             if (!EngineInit(game.string(), ExeRoot.string())) { return ENGINE_ERROR; };
         }
 
-        std::vector<byte> image;
         std::vector<std::pair<byte*, byte*>> sections;
         {
             auto [base, size] = GetModuleInfo(pid, processName);
             if (!(base && size)) { return MODULE_NOT_FOUND; }
 
-            image.resize(size);
-            if (!Read(base, image.data(), size)) { return CANNOT_READ; }
-            sections = GetExSections(image.data());
+            Image.resize(size);
+            if (!Read(base, Image.data(), size)) { return CANNOT_READ; }
+            sections = GetExSections(Image.data());
             if (!sections.size()) { return INVALID_IMAGE; }
             Base = reinterpret_cast<uint64_t>(base);
         }
 
 
         {
-            auto detected = DetectUEVersion(image);
+            auto detected = DetectUEVersion(Image);
             if (!detected.empty()) {
                 if (UEVersion == "Unknown" || UEVersion == "4.x" || UEVersion == "5.x")
                     UEVersion = detected;
-                fmt::print("  Detected UE version : {}\n", UEVersion);
+                LOG("  Detected UE version : {}\n", UEVersion);
             }
-            fmt::print("  Game                : {}\n", processName.string());
-            fmt::print("  UE5 mode            : {}\n\n", IsUE5 ? "yes" : "no");
+            LOG("  Game                : {}\n", processName.string());
+            LOG("  UE5 mode            : {}\n\n", IsUE5 ? "yes" : "no");
         }
 
 
@@ -209,8 +297,7 @@ public:
                 if (FindObjObjects(s, e, ActiveGObjectsSig, gobjMatch)) { found = true; break; }
             }
             if (!found) {
-                fmt::print("  Primary GObjects sig failed — running auto-scan ({} patterns)...\n",
-                    16); 
+                LOGW("  Primary GObjects sig failed — running auto-scan ({} patterns)...\n", 16);
                 for (auto& [s, e] : sections) {
                     autoGobj = AutoFindGObjects(s, e);
                     if (autoGobj.found) {
@@ -218,7 +305,7 @@ public:
                             const_cast<byte*>(autoGobj.sig.Bytes.data()),
                             autoGobj.sig.Bytes.size());
                         gobjMatch = { s, sigMatch ? (size_t)(sigMatch - s) : 0u };
-                        fmt::print("  Auto-found GObjects via: {}\n", autoGobj.label);
+                        LOG("  Auto-found GObjects via: {}\n", autoGobj.label);
                         break;
                     }
                 }
@@ -232,8 +319,7 @@ public:
                 if (FindGlobalNames(s, e, ActiveGNamesSig, gnamesMatch)) { found = true; break; }
             }
             if (!found) {
-                fmt::print("  Primary GNames sig failed — running auto-scan ({} patterns)...\n",
-                    13);
+                LOGW("  Primary GNames sig failed — running auto-scan ({} patterns)...\n", 13);
                 for (auto& [s, e] : sections) {
                     autoGnames = AutoFindGNames(s, e);
                     if (autoGnames.found) {
@@ -241,7 +327,7 @@ public:
                             const_cast<byte*>(autoGnames.sig.Bytes.data()),
                             autoGnames.sig.Bytes.size());
                         gnamesMatch = { s, sigMatch ? (size_t)(sigMatch - s) : 0u };
-                        fmt::print("  Auto-found GNames   via: {}\n", autoGnames.label);
+                        LOG("  Auto-found GNames   via: {}\n", autoGnames.label);
                         break;
                     }
                 }
@@ -254,6 +340,29 @@ public:
         if (!autoGobj.found)   autoGobj   = { true, ActiveGObjectsSig, "primary (from config/built-in)" };
         if (!autoGnames.found) autoGnames = { true, ActiveGNamesSig,   "primary (from config/built-in)" };
         SaveAutoFoundSigs(ExeRoot.string(), gameName, autoGobj, autoGnames, UEVersion);
+
+        {
+            LOG("  Running runtime offset discovery...\n");
+            auto ao  = AutoDiscoverOffsets();
+            OffsetInfo = ApplyAutoOffsets(ao);
+        }
+
+        {
+            LOG("  Scanning for UE engine functions...\n");
+            for (auto& [s, e] : sections)
+                AutoFindAllFunctions(Image.data(), s, e, FoundFuncs);
+
+            size_t found = 0;
+            for (auto& r : FoundFuncs) {
+                if (r.found) {
+                    LOG("  [{:>35}]  RVA=0x{:X}  ({})\n", r.name, r.rva, r.label);
+                    found++;
+                } else {
+                    LOGW("  [{:>35}]  NOT FOUND\n", r.name);
+                }
+            }
+            LOG("  Functions found: {}/{}\n", found, FoundFuncs.size());
+        }
 
         return SUCCESS;
     }
@@ -272,7 +381,7 @@ public:
                 });
                 bar.Finish();
             }
-            fmt::print("  Total names : {}\n\n", size);
+            LOG("  Total names : {}\n\n", size);
         }
 
         std::unordered_map<byte*, std::vector<UE_UObject>> packages;
@@ -301,7 +410,7 @@ public:
                 }
                 bar.Finish();
             }
-            fmt::print("  Total objects : {}\n\n", size);
+            LOG("  Total objects : {}\n\n", size);
         }
 
         if (!Full) { return SUCCESS; }
@@ -310,7 +419,7 @@ public:
             size_t total   = packages.size();
             size_t erased  = std::erase_if(packages,
                 [](auto& pkg) { return pkg.second.size() < 2; });
-            fmt::print("  Packages : {}  (wiped {} empty)\n\n", packages.size(), erased);
+            LOG("  Packages : {}  (wiped {} empty)\n\n", packages.size(), erased);
         }
 
         if (!packages.size()) { return ZERO_PACKAGES; }
@@ -334,13 +443,102 @@ public:
                 }
             }
             bar.Finish();
-            fmt::print("  Saved : {}/{}\n", saved, packages.size());
+            LOG("  Saved : {}/{}\n", saved, packages.size());
 
             if (!unsaved.empty()) {
                 unsaved.erase(unsaved.size() - 2);
-                fmt::print("  Empty packages (skipped) : [ {} ]\n", unsaved);
+                LOGW("  Empty packages (skipped) : [ {} ]\n", unsaved);
             }
         }
+
+        {
+            constexpr uintptr_t kCloseThreshold = 0x1000;
+
+            std::unordered_map<std::string, uintptr_t> patternRvas;
+            for (auto& fr : FoundFuncs)
+                if (fr.found && fr.source == "pattern")
+                    patternRvas[fr.name] = fr.rva;
+
+            auto vresults = ResolveVTableFunctions(
+                GetVTblFuncDefs(), Base,
+                Image.data(), Image.size(),
+                patternRvas);
+
+            for (auto& vr : vresults)
+            {
+                if (vr.status != VTblStatus::FOUND_IN_VTABLE) continue;
+
+                bool merged = false;
+                for (auto& fr : FoundFuncs)
+                {
+                    if (fr.name != vr.funcName) continue;
+                    merged = true;
+
+                    if (fr.found)
+                    {
+                        uintptr_t oldRva = fr.rva;
+                        uintptr_t delta  = oldRva > vr.rva
+                                           ? oldRva - vr.rva
+                                           : vr.rva - oldRva;
+
+                        if (delta == 0) {
+                            LOG("  [vtable=pattern]  {:<35}  RVA=0x{:X}\n",
+                                fr.name, vr.rva);
+                        } else if (delta < kCloseThreshold) {
+                            LOG("  [vtable>pattern~] {:<35}  vtable=0x{:X}  pattern=0x{:X}  delta=0x{:X}\n",
+                                fr.name, vr.rva, oldRva, delta);
+                        } else {
+                            LOGW("  [vtable>pattern!] {:<35}  vtable=0x{:X}  pattern=0x{:X}  delta=0x{:X}\n",
+                                fr.name, vr.rva, oldRva, delta);
+                        }
+
+                        fr.rva    = vr.rva;
+                        fr.source = "vtable>pattern";
+                        fr.label  = fmt::format(
+                            "{} vtable[0x{:X}] (pattern was 0x{:X}, delta=0x{:X})",
+                            vr.resolvedClass, vr.vtableIndex, oldRva, delta);
+                    }
+                    else
+                    {
+                        LOG("  [vtable only]     {:<35}  RVA=0x{:X}  (pattern not found)\n",
+                            fr.name, vr.rva);
+                        fr.found  = true;
+                        fr.rva    = vr.rva;
+                        fr.source = "vtable";
+                        fr.label  = fmt::format(
+                            "{} vtable[0x{:X}]", vr.resolvedClass, vr.vtableIndex);
+                    }
+                    break;
+                }
+
+                LOG("  [vtable index]    {:<35}  index=0x{:X}  [{}]\n",
+                    vr.funcName, vr.vtableIndex,
+                    vr.heuristic ? "heuristic" : "pattern-seeded");
+
+                if (!merged)
+                {
+                    LOG("  [vtable new]      {:<35}  RVA=0x{:X}\n", vr.funcName, vr.rva);
+                    FuncResult nr;
+                    nr.found  = true;
+                    nr.rva    = vr.rva;
+                    nr.source = "vtable";
+                    nr.label  = fmt::format(
+                        "{} vtable[0x{:X}]", vr.resolvedClass, vr.vtableIndex);
+                    nr.name   = vr.funcName;
+                    FoundFuncs.push_back(std::move(nr));
+                }
+            }
+
+            SaveVTableFuncResults(vresults,
+                (Directory / "vtable_funcs.txt").string(), Base);
+        }
+
+        SaveFuncAddresses();
+        DumpVTables();
+        SaveOffsetsTxt(OffsetInfo,
+            (Directory / "offsets.txt").string(),
+            Directory.filename().string(),
+            UEVersion);
 
         return SUCCESS;
     }
@@ -348,37 +546,41 @@ public:
 
 int main(int argc, char* argv[])
 {
-    puts("=== UE Dumper ===\n");
+    {
+        fs::path logDir = fs::path(argc > 0 ? argv[0] : ".").remove_filename();
+        if (!logDir.empty()) fs::create_directories(logDir);
+        LogInit((logDir.empty() ? fs::path(".") : logDir).string() + "logs.txt");
+    }
+
+    LOG("=== UE Dumper ===\n\n");
     auto dumper = Dumper::GetInstance();
 
     switch (dumper->Init(argc, argv))
     {
-    case WINDOW_NOT_FOUND:    puts("Error: can't find UnrealWindow"); return FAILED;
-    case PROCESS_NOT_FOUND:   puts("Error: can't get process ID");   return FAILED;
-    case READER_ERROR:        puts("Error: can't open process");      return FAILED;
-    case CANNOT_GET_PROCNAME: puts("Error: can't get process name");  return FAILED;
-    case ENGINE_ERROR:        puts("Error: no offset profile found for this game\n"
-                                   "       Add it to games.ini next to the exe"); return FAILED;
-    case MODULE_NOT_FOUND:    puts("Error: can't enumerate modules (protected process?)"); return FAILED;
-    case CANNOT_READ:         puts("Error: can't read process memory"); return FAILED;
-    case INVALID_IMAGE:       puts("Error: can't parse PE sections");   return FAILED;
-    case OBJECTS_NOT_FOUND:   puts("Error: GObjects not found (primary + all auto-scan patterns failed)\n"
-                                   "       Add a custom GObjects.Sig to games.ini for this game"); return FAILED;
-    case NAMES_NOT_FOUND:     puts("Error: GNames not found (primary + all auto-scan patterns failed)\n"
-                                   "       Add a custom GNames.Sig to games.ini for this game");   return FAILED;
+    case WINDOW_NOT_FOUND:    LOGE("Error: can't find UnrealWindow\n");                                                   LogClose(); return FAILED;
+    case PROCESS_NOT_FOUND:   LOGE("Error: can't get process ID\n");                                                      LogClose(); return FAILED;
+    case READER_ERROR:        LOGE("Error: can't open process\n");                                                         LogClose(); return FAILED;
+    case CANNOT_GET_PROCNAME: LOGE("Error: can't get process name\n");                                                    LogClose(); return FAILED;
+    case ENGINE_ERROR:        LOGE("Error: no offset profile found for this game\n       Add it to games.ini next to the exe\n"); LogClose(); return FAILED;
+    case MODULE_NOT_FOUND:    LOGE("Error: can't enumerate modules (protected process?)\n");                              LogClose(); return FAILED;
+    case CANNOT_READ:         LOGE("Error: can't read process memory\n");                                                 LogClose(); return FAILED;
+    case INVALID_IMAGE:       LOGE("Error: can't parse PE sections\n");                                                   LogClose(); return FAILED;
+    case OBJECTS_NOT_FOUND:   LOGE("Error: GObjects not found (primary + all auto-scan patterns failed)\n       Add a custom GObjects.Sig to games.ini for this game\n"); LogClose(); return FAILED;
+    case NAMES_NOT_FOUND:     LOGE("Error: GNames not found (primary + all auto-scan patterns failed)\n       Add a custom GNames.Sig to games.ini for this game\n");    LogClose(); return FAILED;
     case SUCCESS:             break;
-    default:                  return FAILED;
+    default:                  LogClose(); return FAILED;
     }
 
-    puts("");
+    LOG("\n");
     switch (dumper->Dump())
     {
-    case FILE_NOT_OPEN:  puts("Error: can't open output file"); return FAILED;
-    case ZERO_PACKAGES:  puts("Error: zero packages found");    return FAILED;
+    case FILE_NOT_OPEN:  LOGE("Error: can't open output file\n"); LogClose(); return FAILED;
+    case ZERO_PACKAGES:  LOGE("Error: zero packages found\n");    LogClose(); return FAILED;
     case SUCCESS:        break;
-    default:             return FAILED;
+    default:             LogClose(); return FAILED;
     }
 
-    puts("\nDone.");
+    LOG("\nDone.\n");
+    LogClose();
     return SUCCESS;
 }

@@ -153,24 +153,30 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="autofind.cpp" />
+    <ClCompile Include="autooffsets.cpp" />
     <ClCompile Include="config.cpp" />
+    <ClCompile Include="log.cpp" />
     <ClCompile Include="engine.cpp" />
     <ClCompile Include="generic.cpp" />
     <ClCompile Include="..\include\fmt\format.cc" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="memory.cpp" />
     <ClCompile Include="utils.cpp" />
+    <ClCompile Include="vtable_resolver.cpp" />
     <ClCompile Include="wrappers.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="autofind.h" />
+    <ClInclude Include="autooffsets.h" />
     <ClInclude Include="config.h" />
+    <ClInclude Include="log.h" />
     <ClInclude Include="engine.h" />
     <ClInclude Include="generic.h" />
     <ClInclude Include="memory.h" />
     <ClInclude Include="PatternScan.h" />
     <ClInclude Include="progress.h" />
     <ClInclude Include="utils.h" />
+    <ClInclude Include="vtable_resolver.h" />
     <ClInclude Include="wrappers.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

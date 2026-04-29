@@ -42,6 +42,7 @@ extern Offsets defs;
 
 
 extern bool IsUE5;
+extern bool FNameReversed;
 extern std::string UEVersion;
 extern SigSpec ActiveGObjectsSig;
 extern SigSpec ActiveGNamesSig;

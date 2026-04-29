@@ -84,6 +84,7 @@ std::vector<GameConfig> LoadGameConfigs(const std::string& path) {
 
         if      (key == "UE")                        { cur.UEVersion = val; cur.IsUE5 = (val[0] == '5'); }
         else if (key == "IsUE5")                     { cur.IsUE5 = (val == "true" || val == "1"); }
+        else if (key == "FNameReversed")             { cur.FNameReversed = (val == "true" || val == "1"); }
         else if (key == "FNameEntry.HeaderSize")     cur.FNameEntry_HeaderSize    = ParseU16(val);
         else if (key == "UObject.Index")             cur.UObject_Index            = ParseU16(val);
         else if (key == "UObject.Class")             cur.UObject_Class            = ParseU16(val);

@@ -1,12 +1,15 @@
 #include "engine.h"
+#include "log.h"
 #include <unordered_map>
 #include <functional>
 #include <cstring>
+#include <fstream>
 
 using namespace std;
 
 Offsets     defs;
 bool        IsUE5 = false;
+bool        FNameReversed = false;
 std::string UEVersion = "Unknown";
 SigSpec     ActiveGObjectsSig;
 SigSpec     ActiveGNamesSig;
@@ -120,6 +123,7 @@ static const SigSpec kCompactGObjectsSig = {
 struct BuiltinProfile {
 	Offsets offsets;
 	bool ue5;
+	bool fnameReversed;
 	std::string version;
 	SigSpec gobjSig;
 	SigSpec gnamesSig;
@@ -135,17 +139,122 @@ static Offsets MakeOffsets() {
 }
 
 static unordered_map<string, BuiltinProfile> builtinProfiles = {
-	{ "SoTGame",                         { MakeOffsets<SeaOfThieves>(),   false, "4.x",  kDefaultGObjectsSig,  kDefaultGNamesSig } },
-	{ "ContraReboot-Win64-Shipping",      { MakeOffsets<ContraReboot>(),   false, "4.x",  kDefaultGObjectsSig,  kDefaultGNamesSig } },
-	{ "FortniteClient-Win64-Shipping",    { MakeOffsets<Fortnite>(),       false, "4.27", kCompactGObjectsSig,  kDefaultGNamesSig } },
-	{ "HogwartsLegacy-Win64-Shipping",    { MakeOffsets<HogwartsLegacy>(), false, "4.27", kCompactGObjectsSig,  kDefaultGNamesSig } },
-	{ "DeadIsland2-Win64-Shipping",       { MakeOffsets<DeadIsland2>(),    false, "4.27", kCompactGObjectsSig,  kDefaultGNamesSig } },
-	{ "Chivalry2-Win64-Shipping",         { MakeOffsets<Chivalry2>(),      false, "4.26", kCompactGObjectsSig,  kDefaultGNamesSig } },
-	{ "Generic-UE4",                      { MakeOffsets<GenericUE4Compact>(), false, "4.x", kCompactGObjectsSig, kDefaultGNamesSig } },
-	{ "Generic-UE5",                      { MakeOffsets<GenericUE5>(),     true,  "5.x",  kDefaultGObjectsSig,  kDefaultGNamesSig } },
+	{ "SoTGame",                         { MakeOffsets<SeaOfThieves>(),      false, true,  "4.x",  kDefaultGObjectsSig,  kDefaultGNamesSig } },
+	{ "ContraReboot-Win64-Shipping",      { MakeOffsets<ContraReboot>(),      false, false, "4.x",  kDefaultGObjectsSig,  kDefaultGNamesSig } },
+	{ "FortniteClient-Win64-Shipping",    { MakeOffsets<Fortnite>(),          false, false, "4.27", kCompactGObjectsSig,  kDefaultGNamesSig } },
+	{ "HogwartsLegacy-Win64-Shipping",    { MakeOffsets<HogwartsLegacy>(),    false, false, "4.27", kCompactGObjectsSig,  kDefaultGNamesSig } },
+	{ "DeadIsland2-Win64-Shipping",       { MakeOffsets<DeadIsland2>(),       false, false, "4.27", kCompactGObjectsSig,  kDefaultGNamesSig } },
+	{ "Chivalry2-Win64-Shipping",         { MakeOffsets<Chivalry2>(),         false, false, "4.26", kCompactGObjectsSig,  kDefaultGNamesSig } },
+	{ "Generic-UE4",                      { MakeOffsets<GenericUE4Compact>(), false, false, "4.x",  kCompactGObjectsSig,  kDefaultGNamesSig } },
+	{ "Generic-UE5",                      { MakeOffsets<GenericUE5>(),        true,  false, "5.x",  kDefaultGObjectsSig,  kDefaultGNamesSig } },
 };
 
-// -----------------------------------------------------------------------
+static void SyncBuiltinProfiles(const std::string& iniPath) {
+	static const unordered_map<string, string> kDesc = {
+		{ "SoTGame",                       "Sea of Thieves (Xbox Game Pass, UE4 non-compact FName)" },
+		{ "ContraReboot-Win64-Shipping",    "Contra: Rebooted (UE4)"                                },
+		{ "FortniteClient-Win64-Shipping",  "Fortnite (UE4.27, compact GObjects)"                   },
+		{ "HogwartsLegacy-Win64-Shipping",  "Hogwarts Legacy (UE4.27, compact GObjects)"             },
+		{ "DeadIsland2-Win64-Shipping",     "Dead Island 2 (UE4.27, compact GObjects)"               },
+		{ "Chivalry2-Win64-Shipping",       "Chivalry 2 (UE4.26, compact GObjects)"                  },
+		{ "Generic-UE4",                    "Generic UE4 (compact FName, standard layout)"            },
+		{ "Generic-UE5",                    "Generic UE5"                                             },
+	};
+
+	{
+		ifstream rf(iniPath);
+		if (rf.is_open()) return;
+	}
+
+	ofstream wf(iniPath);
+	if (!wf.is_open()) return;
+
+	static const char* kHeader =
+		"; ============================================================\n"
+		"; UE Dumper - Game Profiles\n"
+		"; Place this file next to Dumper.exe\n"
+		";\n"
+		"; Format:\n"
+		";   [ExeNameWithoutExtension]\n"
+		";   UE               = 4.27      ; UE version string (sets IsUE5 if \"5.x\")\n"
+		";   IsUE5            = false     ; override UE5 mode explicitly\n"
+		";   FNameReversed    = false     ; set true if FName layout is {Number, ComparisonIndex}\n"
+		";   <Struct>.<Field> = 0xHEX     ; memory offsets\n"
+		";   GObjects.Sig     = XX XX ??  ; IDA-style hex, ?? = wildcard\n"
+		";   GObjects.PtrOffset = -4      ; signed byte offset from match to rel32\n"
+		";   GObjects.PtrExtra  = 3       ; bytes after rel32 in RIP calculation\n"
+		";   GNames.Sig       = ...\n"
+		";   GNames.PtrOffset = ...\n"
+		";   GNames.PtrExtra  = ...\n"
+		"; ============================================================\n";
+
+	static const char* kSep =
+		"; -----------------------------------------------------------------------\n";
+
+	wf << kHeader;
+
+	auto kv = [&](const char* key, const string& val) {
+		char buf[128];
+		snprintf(buf, sizeof(buf), "%-25s= %s\n", key, val.c_str());
+		wf << buf;
+	};
+	auto hex = [](uint16_t v) { char b[8]; snprintf(b, sizeof(b), "0x%X", v); return string(b); };
+	auto WriteSig = [&](const char* prefix, const SigSpec& sig) {
+		string s;
+		for (size_t i = 0; i < sig.Bytes.size(); i++) {
+			if (i) s += ' ';
+			if (sig.Bytes[i] == 0) s += "??";
+			else { char b[4]; snprintf(b, sizeof(b), "%02X", sig.Bytes[i]); s += b; }
+		}
+		char pk[32], po[32], pe[32];
+		snprintf(pk, sizeof(pk), "%s.Sig",       prefix);
+		snprintf(po, sizeof(po), "%s.PtrOffset", prefix);
+		snprintf(pe, sizeof(pe), "%s.PtrExtra",  prefix);
+		kv(pk, s);
+		kv(po, to_string(sig.PtrOffset));
+		kv(pe, to_string(sig.PtrExtra));
+	};
+
+	int added = 0;
+	for (auto& [name, p] : builtinProfiles) {
+		auto& o = p.offsets;
+
+		auto it  = kDesc.find(name);
+		string desc = (it != kDesc.end()) ? it->second : name;
+
+		wf << "\n" << kSep;
+		wf << "; " << desc << "\n";
+		wf << kSep;
+		wf << "[" << name << "]\n";
+		kv("UE", p.version);
+		if (p.ue5)           kv("IsUE5",         "true");
+		if (p.fnameReversed) kv("FNameReversed",  "true");
+		kv("FNameEntry.HeaderSize",   hex(o.FNameEntry.HeaderSize));
+		kv("UObject.Index",           hex(o.UObject.Index));
+		kv("UObject.Class",           hex(o.UObject.Class));
+		kv("UObject.Name",            hex(o.UObject.Name));
+		kv("UObject.Outer",           hex(o.UObject.Outer));
+		kv("UField.Next",             hex(o.UField.Next));
+		kv("UStruct.SuperStruct",     hex(o.UStruct.SuperStruct));
+		kv("UStruct.Children",        hex(o.UStruct.Children));
+		kv("UStruct.PropertiesSize",  hex(o.UStruct.PropertiesSize));
+		kv("UEnum.Names",             hex(o.UEnum.Names));
+		kv("UEnum.NamesElementSize",  hex(o.UEnum.NamesElementSize));
+		kv("UFunction.FunctionFlags", hex(o.UFunction.FunctionFlags));
+		kv("UFunction.Func",          hex(o.UFunction.Func));
+		kv("UProperty.ArrayDim",      hex(o.UProperty.ArrayDim));
+		kv("UProperty.ElementSize",   hex(o.UProperty.ElementSize));
+		kv("UProperty.PropertyFlags", hex(o.UProperty.PropertyFlags));
+		kv("UProperty.Offset",        hex(o.UProperty.Offset));
+		kv("UProperty.Size",          hex(o.UProperty.Size));
+		WriteSig("GObjects", p.gobjSig);
+		WriteSig("GNames",   p.gnamesSig);
+		added++;
+	}
+
+	if (added)
+		LOG("[config] games.ini: added {} new builtin profile(s)\n", added);
+}
 
 static void ApplyConfig(const GameConfig& cfg) {
 	defs.FNameEntry.HeaderSize     = cfg.FNameEntry_HeaderSize;
@@ -167,8 +276,9 @@ static void ApplyConfig(const GameConfig& cfg) {
 	defs.UProperty.Offset          = cfg.UProperty_Offset;
 	defs.UProperty.Size            = cfg.UProperty_Size;
 
-	IsUE5      = cfg.IsUE5;
-	UEVersion  = cfg.UEVersion.empty() ? (cfg.IsUE5 ? "5.x" : "4.x") : cfg.UEVersion;
+	IsUE5         = cfg.IsUE5;
+	FNameReversed = cfg.FNameReversed;
+	UEVersion     = cfg.UEVersion.empty() ? (cfg.IsUE5 ? "5.x" : "4.x") : cfg.UEVersion;
 
 	ActiveGObjectsSig = cfg.GObjects.Bytes.empty() ? kDefaultGObjectsSig : cfg.GObjects;
 	ActiveGNamesSig   = cfg.GNames.Bytes.empty()   ? kDefaultGNamesSig   : cfg.GNames;
@@ -177,12 +287,13 @@ static void ApplyConfig(const GameConfig& cfg) {
 bool EngineInit(std::string game, const std::string& configDir) {
 	if (!configDir.empty()) {
 		auto iniPath = configDir + "games.ini";
+		SyncBuiltinProfiles(iniPath);
 		auto cfgs = LoadGameConfigs(iniPath);
 		for (auto& c : cfgs) {
 			if (c.Name == game) {
 				ApplyConfig(c);
-				printf("[config] Loaded '%s' from games.ini  (UE%s%s)\n",
-					game.c_str(), UEVersion.c_str(), IsUE5 ? " UE5-mode" : "");
+				LOG("[config] Loaded '{}' from games.ini  (UE{}{})\n",
+					game, UEVersion, IsUE5 ? " UE5-mode" : "");
 				return true;
 			}
 		}
@@ -193,6 +304,7 @@ bool EngineInit(std::string game, const std::string& configDir) {
 	auto& p = it->second;
 	defs              = p.offsets;
 	IsUE5             = p.ue5;
+	FNameReversed     = p.fnameReversed;
 	UEVersion         = p.version;
 	ActiveGObjectsSig = p.gobjSig;
 	ActiveGNamesSig   = p.gnamesSig;

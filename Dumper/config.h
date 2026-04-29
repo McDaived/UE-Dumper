@@ -14,6 +14,7 @@ struct GameConfig {
     std::string Name;
     std::string UEVersion;
     bool IsUE5 = false;
+    bool FNameReversed = false;
 
     uint16_t FNameEntry_HeaderSize     = 0;
     uint16_t UObject_Index             = 0;

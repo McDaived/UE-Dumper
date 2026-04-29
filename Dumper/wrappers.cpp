@@ -863,9 +863,10 @@ void UE_UPackage::GenerateEnum(UE_UEnum object, std::vector<Enum>& arr)
 	e.FullName = object.GetFullName();
 	e.CppName = "enum class " + object.GetName() + " : uint8_t";
 	auto names = object.GetNames();
+	const uintptr_t fnameShift = FNameReversed ? 4 : 0;
 	for (auto i = 0ull; i < names.Count; i++)
 	{
-		auto name = UE_FName(names.Data + i * defs.UEnum.NamesElementSize);
+		auto name = UE_FName(names.Data + i * defs.UEnum.NamesElementSize + fnameShift);
 		auto str = name.GetName();
 		auto pos = str.find_last_of(':');
 		if (pos != std::string::npos)
