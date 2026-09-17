@@ -178,7 +178,7 @@ std::string UE_UFunction::GetFunctionFlags() const
 {
 	auto flags = Read<uint32_t>(object + defs.UFunction.FunctionFlags);
 	std::string result;
-	if (flags && FUNC_None) { result = "None"; }
+	if (flags == FUNC_None) { result = "None"; }
 	else
 	{
 		if (flags & FUNC_Final) { result += "Final|"; }
@@ -186,7 +186,7 @@ std::string UE_UFunction::GetFunctionFlags() const
 		if (flags & FUNC_BlueprintAuthorityOnly) { result += "BlueprintAuthorityOnly|"; }
 		if (flags & FUNC_BlueprintCosmetic) { result += "BlueprintCosmetic|"; }
 		if (flags & FUNC_Net) { result += "Net|"; }
-		if (flags & FUNC_NetReliable) { result += "NetReliable"; }
+		if (flags & FUNC_NetReliable) { result += "NetReliable|"; }
 		if (flags & FUNC_NetRequest) { result += "NetRequest|"; }
 		if (flags & FUNC_Exec) { result += "Exec|"; }
 		if (flags & FUNC_Native) { result += "Native|"; }
@@ -218,7 +218,7 @@ std::string UE_UFunction::GetFunctionFlags() const
 
 UE_UClass UE_UFunction::StaticClass()
 {
-	static auto obj = ObjObjects.FindObject("Class CoreUObject.Struct");
+	static auto obj = ObjObjects.FindObject("Class CoreUObject.Function");
 	return obj;
 }
 
@@ -516,7 +516,7 @@ std::string UE_ObjectProperty::GetType() const
 
 UE_UClass UE_ObjectProperty::StaticClass()
 {
-	static auto obj = ObjObjects.FindObject("Class CoreUObject.ObjectPropertyBase");
+	static auto obj = ObjObjects.FindObject("Class CoreUObject.ObjectProperty");
 	return obj;
 }
 
@@ -807,12 +807,8 @@ void UE_UPackage::GenerateStruct(UE_UStruct object, std::vector<Struct>& arr)
 			Member m;
 			auto type = prop.GetType();
 			m.Name = type.second + " " + prop.GetName();
-			if (m.Name.contains("struct UClass* ShipSizeObject"))
-			{
-				/*MessageBoxA(0, 0, 0, 0);*/
-			}
 			m.Size = prop.GetSize() * arrDim;
-			if (m.Size == 0) { return; }
+			if (m.Size == 0) { continue; }
 			m.Offset = prop.GetOffset();
 
 			if (m.Offset > offset)

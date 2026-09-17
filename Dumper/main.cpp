@@ -236,15 +236,64 @@ public:
         if (Wait) { system("pause"); }
 
 
-        uint32_t pid = 0;
-        {
-            HWND hWnd = FindWindowA("UnrealWindow", nullptr);
-            if (!hWnd) { return WINDOW_NOT_FOUND; };
-            GetWindowThreadProcessId(hWnd, reinterpret_cast<DWORD*>(&pid));
-            if (!pid) { return PROCESS_NOT_FOUND; };
+        if (TryConnectDriver()) {
+            LOG("[+] Connected to kernel driver\n");
+        } else {
+            LOGW("[!] Kernel driver not loaded — falling back to usermode reads.\n");
         }
 
+        auto findByName = [](const wchar_t* exeName) -> uint32_t {
+            uint32_t pid = 0;
+            HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snap == INVALID_HANDLE_VALUE) return 0;
+            PROCESSENTRY32W pe{};
+            pe.dwSize = sizeof(pe);
+            if (Process32FirstW(snap, &pe)) {
+                do {
+                    if (_wcsicmp(pe.szExeFile, exeName) == 0) {
+                        pid = pe.th32ProcessID;
+                        break;
+                    }
+                } while (Process32NextW(snap, &pe));
+            }
+            CloseHandle(snap);
+            return pid;
+        };
+
+        auto findByWindow = []() -> uint32_t {
+            HWND hWnd = FindWindowA("UnrealWindow", nullptr);
+            if (!hWnd) return 0;
+            DWORD pid = 0;
+            GetWindowThreadProcessId(hWnd, &pid);
+            return pid;
+        };
+
+        const wchar_t* preferred = L"SoTGame.exe";
+        uint32_t pid = findByName(preferred);
+        if (!pid) pid = findByWindow();
+
+        if (!pid) {
+            LOG("[+] Waiting SoTGame.exe\n");
+            static const char spin[] = "|/-\\";
+            int tick = 0;
+            while (!pid) {
+                pid = findByName(preferred);
+                if (!pid) pid = findByWindow();
+                if (pid) break;
+                fmt::print("\r    {} {}s ...", spin[tick % 4], tick);
+                std::cout.flush();
+                Sleep(1000);
+                ++tick;
+            }
+            fmt::print("\r                            \r");  
+        }
+
+        LOG("[+] SoTGame.exe Found! ( PID {} )\n", pid);
+
         if (!ReaderInit(pid)) { return READER_ERROR; };
+        LOG("    Reader mode : {}\n", ReaderModeName());
+
+        LOG("[+] Starting dump....\n\n");
 
         fs::path processName;
         {
@@ -263,8 +312,10 @@ public:
 
         std::vector<std::pair<byte*, byte*>> sections;
         {
-            auto [base, size] = GetModuleInfo(pid, processName);
-            if (!(base && size)) { return MODULE_NOT_FOUND; }
+            void*    base = nullptr;
+            uint32_t size = 0;
+            if (!ResolveModule(pid, processName.c_str(), base, size))
+                return MODULE_NOT_FOUND;
 
             Image.resize(size);
             if (!Read(base, Image.data(), size)) { return CANNOT_READ; }
@@ -544,12 +595,60 @@ public:
     }
 };
 
+static bool ShouldPauseAtExit()
+{
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut == INVALID_HANDLE_VALUE || GetFileType(hOut) != FILE_TYPE_CHAR)
+        return false;
+    DWORD procs[4] = {0};
+    DWORD n = GetConsoleProcessList(procs, 4);
+    return n <= 1;  
+}
+
+static void PauseAtExitHook()
+{
+    if (!ShouldPauseAtExit()) return;
+    fmt::print("\nPress any key to exit ...");
+    std::cout.flush();
+    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+    if (hIn == INVALID_HANDLE_VALUE) return;
+    FlushConsoleInputBuffer(hIn);
+    INPUT_RECORD rec;
+    DWORD read = 0;
+    for (;;) {
+        if (!ReadConsoleInputW(hIn, &rec, 1, &read) || read == 0) break;
+        if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) break;
+    }
+    fmt::print("\n");
+}
+
+static int RealMain(int argc, char* argv[]);
+
 int main(int argc, char* argv[])
 {
+    atexit(PauseAtExitHook);
+
+    try {
+        return RealMain(argc, argv);
+    }
+    catch (const std::exception& e) {
+        LOGE("Unhandled exception: {}\n", e.what());
+        return 1;
+    }
+    catch (...) {
+        LOGE("Unhandled unknown exception.\n");
+        return 1;
+    }
+}
+
+static int RealMain(int argc, char* argv[])
+{
+
     {
         fs::path logDir = fs::path(argc > 0 ? argv[0] : ".").remove_filename();
-        if (!logDir.empty()) fs::create_directories(logDir);
-        LogInit((logDir.empty() ? fs::path(".") : logDir).string() + "logs.txt");
+        if (logDir.empty()) logDir = fs::path(".");
+        fs::create_directories(logDir);
+        LogInit((logDir / "logs.txt").string());
     }
 
     LOG("=== UE Dumper ===\n\n");

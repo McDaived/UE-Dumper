@@ -59,8 +59,10 @@ std::vector<std::pair<byte*, byte*>> GetExSections(byte* data)
     for (auto i = 0u; i < nt->FileHeader.NumberOfSections; i++, s++) {
         if (s->Characteristics & IMAGE_SCN_CNT_CODE)
         {
-            auto start = data + s->PointerToRawData;
-            auto end = start + s->SizeOfRawData;
+            DWORD size = s->Misc.VirtualSize ? s->Misc.VirtualSize
+                                             : s->SizeOfRawData;
+            auto start = data + s->VirtualAddress;
+            auto end   = start + size;
             sections.push_back({ start, end });
         }
     }

@@ -12,7 +12,18 @@ static std::string Trim(const std::string& s) {
 }
 
 static uint16_t ParseU16(const std::string& s) {
-    return (uint16_t)std::stoul(s, nullptr, 0);
+    try { return (uint16_t)std::stoul(s, nullptr, 0); }
+    catch (...) { return 0; }
+}
+
+static int32_t ParseI32(const std::string& s) {
+    try { return (int32_t)std::stoi(s, nullptr, 0); }
+    catch (...) { return 0; }
+}
+
+static uint8_t ParseHexByte(const std::string& tok) {
+    try { return (uint8_t)std::stoul(tok, nullptr, 16); }
+    catch (...) { return 0; }
 }
 
 std::vector<uint8_t> ParseSigString(const std::string& hex) {
@@ -20,10 +31,16 @@ std::vector<uint8_t> ParseSigString(const std::string& hex) {
     std::istringstream ss(hex);
     std::string tok;
     while (ss >> tok) {
-        if (tok == "??" || tok == "?")
+        if (tok == "??" || tok == "?") {
             result.push_back(0x00);
-        else
-            result.push_back((uint8_t)std::stoul(tok, nullptr, 16));
+        } else {
+            bool allHex = !tok.empty();
+            for (char c : tok) {
+                if (!std::isxdigit((unsigned char)c)) { allHex = false; break; }
+            }
+            if (!allHex) continue;
+            result.push_back(ParseHexByte(tok));
+        }
     }
     return result;
 }
@@ -104,11 +121,11 @@ std::vector<GameConfig> LoadGameConfigs(const std::string& path) {
         else if (key == "UProperty.Offset")          cur.UProperty_Offset         = ParseU16(val);
         else if (key == "UProperty.Size")            cur.UProperty_Size           = ParseU16(val);
         else if (key == "GObjects.Sig")              cur.GObjects.Bytes           = ParseSigString(val);
-        else if (key == "GObjects.PtrOffset")        cur.GObjects.PtrOffset       = std::stoi(val, nullptr, 0);
-        else if (key == "GObjects.PtrExtra")         cur.GObjects.PtrExtra        = std::stoi(val, nullptr, 0);
+        else if (key == "GObjects.PtrOffset")        cur.GObjects.PtrOffset       = ParseI32(val);
+        else if (key == "GObjects.PtrExtra")         cur.GObjects.PtrExtra        = ParseI32(val);
         else if (key == "GNames.Sig")                cur.GNames.Bytes             = ParseSigString(val);
-        else if (key == "GNames.PtrOffset")          cur.GNames.PtrOffset         = std::stoi(val, nullptr, 0);
-        else if (key == "GNames.PtrExtra")           cur.GNames.PtrExtra          = std::stoi(val, nullptr, 0);
+        else if (key == "GNames.PtrOffset")          cur.GNames.PtrOffset         = ParseI32(val);
+        else if (key == "GNames.PtrExtra")           cur.GNames.PtrExtra          = ParseI32(val);
     }
     Flush();
     return configs;

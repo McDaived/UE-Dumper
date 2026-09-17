@@ -1,9 +1,11 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36401.2 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Dumper", "Dumper\Dumper.vcxproj", "{E7BF23DE-03F0-4CEC-A099-E984C5A0CA07}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "uedmpdrv", "Driver\driver.vcxproj", "{B5C2E413-72A8-4E3F-9D51-8F1C2A6D4B79}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,6 +17,10 @@ Global
 		{E7BF23DE-03F0-4CEC-A099-E984C5A0CA07}.Debug|x64.Build.0 = Debug|x64
 		{E7BF23DE-03F0-4CEC-A099-E984C5A0CA07}.Release|x64.ActiveCfg = Release|x64
 		{E7BF23DE-03F0-4CEC-A099-E984C5A0CA07}.Release|x64.Build.0 = Release|x64
+		{B5C2E413-72A8-4E3F-9D51-8F1C2A6D4B79}.Debug|x64.ActiveCfg = Debug|x64
+		{B5C2E413-72A8-4E3F-9D51-8F1C2A6D4B79}.Debug|x64.Build.0 = Debug|x64
+		{B5C2E413-72A8-4E3F-9D51-8F1C2A6D4B79}.Release|x64.ActiveCfg = Release|x64
+		{B5C2E413-72A8-4E3F-9D51-8F1C2A6D4B79}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

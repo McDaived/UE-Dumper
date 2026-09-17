@@ -124,7 +124,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <CallingConvention>FastCall</CallingConvention>
+      <!-- FastCall was set here too — meaningless on Windows x64. -->
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -141,8 +141,10 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <CallingConvention>FastCall</CallingConvention>
-      <Optimization>Disabled</Optimization>
+      <!-- Was: <CallingConvention>FastCall</CallingConvention> — meaningless on
+           Windows x64 (single calling convention).  Was: <Optimization>Disabled</Optimization>
+           on Release — the "Release" build was actually /Od. -->
+      <Optimization>MaxSpeed</Optimization>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

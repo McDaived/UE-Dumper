@@ -20,7 +20,7 @@ struct SeaOfThieves {
 	struct { uint16_t Index = 0x14; uint16_t Class = 0x8; uint16_t Name = 0x24; uint16_t Outer = 0x18; } UObject;
 	struct { uint16_t Next = 0x28; }       UField;
 	struct { uint16_t SuperStruct = 0x30; uint16_t Children = 0x38; uint16_t PropertiesSize = 0x40; } UStruct;
-	struct { uint16_t Names = 0x40; uint16_t NamesElementSize = 0xC; }  UEnum;
+	struct { uint16_t Names = 0x40; uint16_t NamesElementSize = 0x10; }  UEnum;
 	struct { uint16_t FunctionFlags = 0x88; uint16_t Func = 0xB0; }     UFunction;
 	struct { uint16_t ArrayDim = 0x40; uint16_t ElementSize = 0x46; uint16_t PropertyFlags = 0x30; uint16_t Offset = 0x48; uint16_t Size = 0x70; } UProperty;
 };
@@ -119,7 +119,6 @@ static const SigSpec kCompactGObjectsSig = {
 	-4, 3
 };
 
-
 struct BuiltinProfile {
 	Offsets offsets;
 	bool ue5;
@@ -194,9 +193,9 @@ static void SyncBuiltinProfiles(const std::string& iniPath) {
 	wf << kHeader;
 
 	auto kv = [&](const char* key, const string& val) {
-		char buf[128];
-		snprintf(buf, sizeof(buf), "%-25s= %s\n", key, val.c_str());
-		wf << buf;
+		char keyBuf[32];
+		snprintf(keyBuf, sizeof(keyBuf), "%-25s", key);
+		wf << keyBuf << "= " << val << "\n";
 	};
 	auto hex = [](uint16_t v) { char b[8]; snprintf(b, sizeof(b), "0x%X", v); return string(b); };
 	auto WriteSig = [&](const char* prefix, const SigSpec& sig) {
