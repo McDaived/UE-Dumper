@@ -67,6 +67,12 @@ Supports **UE4** (4.20 – 4.27) and **UE5** (5.0 – 5.3).
 | **Detailed console output** | Prints game name, detected UE version, UE5 mode flag, found addresses, and counts |
 | **Helpful error messages** | Every error code prints message and a suggestion (e.g. which `games.ini` key to add) |
 
+### Kernel Driver Support
+| Feature | Description |
+|---|---|
+| **Kernel-assisted dumpin** |  Kernel Driver support for reliable and improved memory access during the dumping process |
+| **Improved dump reliability** | Kernel-assisted access provides a more reliable dumping workflow and improves stability during large memory scans |
+| **Enhanced memory access** | Improved access to required process memory regions for more consistent object, name, and function discovery |
 ---
 
 ## Supported Games (built-in profiles)
@@ -179,6 +185,16 @@ The FName pool reader switches to the UE5 block-based layout automatically.
 ## Changelog
 
 ```diff
+## v2.0
+
++ Fixed all known issues and stability problems across the dumper
++ Added Kernel Driver support for reliable and improved dumping
++ Improved memory scanning with extended validation and cross-checking of discovered functions
++ All discovered functions are now validated to ensure higher accuracy and reliability
++ Improved and expanded sigs pattern scanning with a significantly larger search range
++ Fixed existing sigs patterns and improved pattern matching reliability across different builds
++ Extended memory search capabilities to improve detection on unknown or modified engine builds
+
 ## v1.1
 
 # VTable Function Resolver (vtable_resolver.h/cpp)
