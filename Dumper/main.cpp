@@ -268,7 +268,7 @@ public:
             return pid;
         };
 
-        const wchar_t* preferred = L"SoTGame.exe";
+        const wchar_t* preferred = L"FortniteClient-Win64-Shipping.exe";
         uint32_t pid = findByName(preferred);
         if (!pid) pid = findByWindow();
 
